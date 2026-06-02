@@ -1,6 +1,55 @@
-INTEGER,PLUS,EOF,MINUS,MULTI,DIV,LPAR,RPAR,ASSIGN,SEMI,DOT,BEGIN,END,ID,PROGRAM,VAR,COLON,COMMA,REAL,INTEGER_CONST,REAL_CONST,INTEGER_DIV,FLOAT_DIV = "INTEGER","PLUS","EOF","MINUS","MULTI","DIV","LPAR","RPAR","ASSIGN","SEMI","DOT","BEGIN","END","ID","PROGRAM","VAR","COLON","COMMA","REAL","INTEGER_CONST","REAL_CONST","INTEGER_DIV","FLOAT_DIV"
+INTEGER,PLUS,EOF,MINUS,MULTI,DIV,LPAR,RPAR,ASSIGN,SEMI,DOT,BEGIN,END,ID,PROGRAM,VAR,COLON,COMMA,REAL,INTEGER_CONST,REAL_CONST,INTEGER_DIV,FLOAT_DIV,PROCEDURE = "INTEGER","PLUS","EOF","MINUS","MULTI","DIV","LPAR","RPAR","ASSIGN","SEMI","DOT","BEGIN","END","ID","PROGRAM","VAR","COLON","COMMA","REAL","INTEGER_CONST","REAL_CONST","INTEGER_DIV","FLOAT_DIV","PROCEDURE"
 class AST(object):
     pass
+
+class Symbol(object):
+    def __init__(self, name, type=None):
+        self.name = name
+        self.type = type
+
+class BuiltinTypeSymbol(Symbol):
+    def __init__(self, name):
+        super().__init__(name)
+
+    def __str__(self):
+        return self.name
+
+    __repr__ = __str__
+
+class VarSymbol(Symbol):
+    def __init__(self, name, type):
+        super().__init__(name, type)
+
+    def __str__(self):
+        return '<{name}:{type}>'.format(name=self.name, type=self.type)
+
+    __repr__ = __str__
+
+class SymbolTable(object):
+    def __init__(self):
+        self._symbols = {}
+        self._init_builtins()
+
+    def _init_builtins(self):
+        self.define(BuiltinTypeSymbol('INTEGER'))
+        self.define(BuiltinTypeSymbol('REAL'))
+
+    def __str__(self):
+        s = 'Symbols: {symbols}'.format(
+            symbols=[value for value in self._symbols.values()]
+        )
+        return s
+
+    __repr__ = __str__
+
+    def define(self, symbol):
+        print('Define: %s' % symbol)
+        self._symbols[symbol.name] = symbol
+
+    def lookup(self, name):
+        print('Lookup: %s' % name)
+        symbol = self._symbols.get(name)
+        return symbol
 
 class binOp(AST):
     def __init__(self,left,op,right):
@@ -67,6 +116,11 @@ class Token:
     def __repr__(self):
         return self.__str__()
     
+class ProcedureDecl(AST):
+    def __init__(self, proc_name, block_node):
+        self.proc_name = proc_name
+        self.block_node = block_node
+    
 RESERVED_KEYWORDS = {
     'PROGRAM': Token('PROGRAM', 'PROGRAM'),
     'VAR': Token('VAR', 'VAR'),
@@ -75,6 +129,7 @@ RESERVED_KEYWORDS = {
     'REAL': Token('REAL', 'REAL'),
     'BEGIN': Token('BEGIN', 'BEGIN'),
     'END': Token('END', 'END'),
+    'PROCEDURE': Token('PROCEDURE', 'PROCEDURE'),
 }
     
 class lexer(object):
@@ -222,6 +277,15 @@ class Parser(object):
                 var_decl = self.variable_declaration()
                 declarations.extend(var_decl)
                 self.eat(SEMI)
+        while self.current_token.Type == PROCEDURE:
+            self.eat(PROCEDURE)
+            proc_name = self.current_token.value
+            self.eat(ID)
+            self.eat(SEMI)
+            block_node = self.block()
+            proc_decl = ProcedureDecl(proc_name, block_node)
+            declarations.append(proc_decl)
+            self.eat(SEMI)
 
         return declarations
 
@@ -397,6 +461,60 @@ class NodeVisitor(object):
     def generic_visit(self, node):
         raise Exception('No visit_{} method'.format(type(node).__name__))
 
+class SymbolTableBuilder(NodeVisitor):
+    def __init__(self):
+        self.symtab = SymbolTable()
+
+    def visit_Block(self, node):
+        for declaration in node.declarations:
+            self.visit(declaration)
+        self.visit(node.compound_statement)
+
+    def visit_Program(self, node):
+        self.visit(node.block)
+
+    def visit_BinOp(self, node):
+        self.visit(node.left)
+        self.visit(node.right)
+
+    def visit_Num(self, node):
+        pass
+
+    def visit_UnaryOp(self, node):
+        self.visit(node.expr)
+
+    def visit_Compound(self, node):
+        for child in node.children:
+            self.visit(child)
+
+    def visit_NoOp(self, node):
+        pass
+
+    def visit_VarDecl(self, node):
+        type_name = node.type_node.value
+        type_symbol = self.symtab.lookup(type_name)
+        var_name = node.var_node.value
+        var_symbol = VarSymbol(var_name, type_symbol)
+        self.symtab.define(var_symbol)
+
+    def visit_Assign(self, node):
+        var_name = node.left.value
+        var_symbol = self.symtab.lookup(var_name)
+        if var_symbol is None:
+            raise NameError(repr(var_name))
+
+        self.visit(node.right)
+
+    def visit_Var(self, node):
+        var_name = node.value
+        var_symbol = self.symtab.lookup(var_name)
+
+        if var_symbol is None:
+            raise NameError(repr(var_name))
+    
+    def visit_ProcedureDecl(self, node):
+        pass
+
 class Interpreter(NodeVisitor):
     def __init__(self, interpreter):
         self.interpreter = interpreter
@@ -455,6 +573,9 @@ class Interpreter(NodeVisitor):
         pass
 
     def visit_Type(self, node):
+        pass
+
+    def visit_ProcedureDecl(self,node):
         pass
 
     def interpret(self):
